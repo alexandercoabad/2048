@@ -1,8 +1,8 @@
 ![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
 
-# Tiny Tapeout Verilog Project Template
+# 2048 Game
 
-- [Read the documentation for project](docs/info.md)
+Colorful 2048 game!
 
 ## What is Tiny Tapeout?
 
