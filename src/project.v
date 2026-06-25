@@ -702,9 +702,9 @@ module tt_um_AbAdA_2048 (
 
       if (r_va3) begin
         if (r_final_game_over && r_final_go_pixel) begin
-          {r_out_R, r_out_G, r_out_B} <= RED;
+          {r_out_R, r_out_G, r_out_B} <= BLACK;
         end else if (r_final_game_over && r_final_go_box) begin
-          {r_out_R, r_out_G, r_out_B} <= BLACK; // Dark layout background behind the large blinking text
+          {r_out_R, r_out_G, r_out_B} <= WHITE; // Dark layout background behind the large blinking text
         end else if (r_final_num) begin
           {r_out_R, r_out_G, r_out_B} <= r_final_num_color;
         end else if (r_final_tile) begin
