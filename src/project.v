@@ -1,4 +1,5 @@
-/* Port-Hardened, Fully Pipelined 2048 Core & VGA Grid Engine with Game Over Overlay
+/* Port-Hardened, Fully Pipelined 2048 Core & VGA Grid Engine
+ * Features: Large (2x Scaled) Blinking Game Over Overlay
  * Copyright (c) 2026 AbAdA
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -58,7 +59,7 @@ module tt_um_AbAdA_2048 (
   );
 
   // --------------------------------------------------------------------------
-  // HARDENED OUTPUT REGISTERS  (TT VGA pinout)
+  // HARDENED OUTPUT REGISTERS (TT VGA pinout)
   // --------------------------------------------------------------------------
   (* keep = "true" *) reg        r_out_hsync, r_out_vsync;
   (* keep = "true" *) reg [1:0]  r_out_R, r_out_G, r_out_B;
@@ -83,6 +84,16 @@ module tt_um_AbAdA_2048 (
     r_hs0 <= hsync_w;        r_hs1 <= r_hs0; r_hs2 <= r_hs1; r_hs3 <= r_hs2;
     r_vs0 <= vsync_w;        r_vs1 <= r_vs0; r_vs2 <= r_vs1; r_vs3 <= r_vs2;
   end
+
+  // --------------------------------------------------------------------------
+  // BLINK TIMING GENERATOR (~2Hz flashing loop)
+  // --------------------------------------------------------------------------
+  reg [24:0] blink_counter;
+  always @(posedge clk) begin
+    if (sys_rst) blink_counter <= 25'b0;
+    else         blink_counter <= blink_counter + 25'b1;
+  end
+  wire blink_pulse = blink_counter[23]; // Bit 23 creates the toggle rate
 
   // --------------------------------------------------------------------------
   // GAMEPAD PMOD INPUT SYNCHRONIZER
@@ -174,7 +185,7 @@ module tt_um_AbAdA_2048 (
   end
 
   // --------------------------------------------------------------------------
-  // GAME STATE MACHINE WITH GAME OVER VALIDATION
+  // GAME STATE MACHINE WITH GAME OVER DETECTION
   // --------------------------------------------------------------------------
   localparam STATE_IDLE      = 3'd0;
   localparam STATE_PREP      = 3'd1;
@@ -182,14 +193,14 @@ module tt_um_AbAdA_2048 (
   localparam STATE_STORE     = 3'd3;
   localparam STATE_CHECK     = 3'd4;
   localparam STATE_SPAWN     = 3'd5;
-  localparam STATE_EVAL_DEAD = 3'd6; // Added for game-over evaluation loop
+  localparam STATE_EVAL_DEAD = 3'd6;
 
   reg [2:0] game_state;
   reg [1:0] current_lane, move_dir;
   reg       any_moved;
   integer reset_idx;
   reg [3:0] board [0:15];
-  reg       r_game_over; // Global state tracking flag
+  reg       r_game_over;
 
   function [3:0] get_board_idx(
       input [1:0] lane_num,
@@ -214,7 +225,6 @@ module tt_um_AbAdA_2048 (
   reg [3:0] v0, v1, v2, v3;
   reg [3:0] r_f0, r_f1, r_f2, r_f3;
 
-  // Combinational shift arrays
   reg [3:0] s0, s1, s2, s3;
   reg [3:0] c0, c1, c2, c3;
   reg [3:0] combinational_f0, combinational_f1, combinational_f2, combinational_f3;
@@ -277,7 +287,6 @@ module tt_um_AbAdA_2048 (
     end
   end
 
-  // Game-Over Grid Evaluator Variables
   reg [4:0] dead_check_idx;
   reg       moves_possible;
   wire [1:0] check_row = dead_check_idx[3:2];
@@ -399,12 +408,10 @@ module tt_um_AbAdA_2048 (
             if (board[dead_check_idx[3:0]] == 4'd0) begin
               moves_possible <= 1'b1;
             end
-            // Check matching horizontal neighbor
             if (check_col < 2'd3) begin
               if (board[dead_check_idx[3:0]] == board[dead_check_idx[3:0] + 4'd1])
                 moves_possible <= 1'b1;
             end
-            // Check matching vertical neighbor
             if (check_row < 2'd3) begin
               if (board[dead_check_idx[3:0]] == board[dead_check_idx[3:0] + 4'd4])
                 moves_possible <= 1'b1;
@@ -419,7 +426,7 @@ module tt_um_AbAdA_2048 (
   end
 
   // --------------------------------------------------------------------------
-  // VGA PIPELINE ‚Äî Stage 0: coordinate evaluation
+  // VGA PIPELINE — Stage 0: Coordinate Mapping & Overlay Limits
   // --------------------------------------------------------------------------
   reg [9:0] r_grid_x;
   reg [8:0] r_grid_y;
@@ -450,7 +457,7 @@ module tt_um_AbAdA_2048 (
   wire [6:0] local_y = local_y_full[6:0];
 
   // --------------------------------------------------------------------------
-  // VGA PIPELINE ‚Äî Stage 1: Grid generation & Game Over String Address Mapping
+  // VGA PIPELINE — Stage 1: Game Over Layout & Coordinate Downscaling (2x Font)
   // --------------------------------------------------------------------------
   reg [3:0] r_tile_val;
   reg [6:0] r_local_x, r_local_y;
@@ -473,20 +480,21 @@ module tt_um_AbAdA_2048 (
   wire is_tile_box = r_in_grid && ~is_gap && (r_tile_val != 4'd0);
   wire is_board_bg = r_in_grid && is_gap;
 
-  // Centered "GAME OVER" Text bounding box coordinates (width: 90 pixels, height: 16 pixels)
-  // Shifted globally to screen-space grid reference coordinates
-  wire in_go_bb   = (r_stage1_x >= 10'd147 && r_stage1_x < 10'd237) && (r_stage1_y >= 10'd184 && r_stage1_y < 10'd200);
-  wire [6:0] go_x = r_stage1_x - 10'd147;
-  wire [3:0] go_y = r_stage1_y - 10'd184;
+  // Bounding box dimensions for enlarged game over overlay
+  wire in_go_bb   = (r_stage1_x >= 10'd102 && r_stage1_x < 10'd282) && (r_stage1_y >= 10'd176 && r_stage1_y < 10'd208);
+  
+  // Downscaling screen coordinates via right-shifting logic to achieve pixel doubling
+  wire [7:0] go_x = (r_stage1_x - 10'd102) >> 1; 
+  wire [3:0] go_y = (r_stage1_y - 10'd176) >> 1; 
 
-  wire [3:0] go_char_col = (go_x < 10'd10) ? 4'd0 :
-                           (go_x < 10'd20) ? 4'd1 :
-                           (go_x < 10'd30) ? 4'd2 :
-                           (go_x < 10'd40) ? 4'd3 :
-                           (go_x < 10'd50) ? 4'd4 : // Space gap
-                           (go_x < 10'd60) ? 4'd5 :
-                           (go_x < 10'd70) ? 4'd6 :
-                           (go_x < 10'd80) ? 4'd7 : 4'd8;
+  wire [3:0] go_char_col = (go_x < 8'd10) ? 4'd0 :
+                           (go_x < 8'd20) ? 4'd1 :
+                           (go_x < 8'd30) ? 4'd2 :
+                           (go_x < 8'd40) ? 4'd3 :
+                           (go_x < 8'd50) ? 4'd4 : // Word Gap
+                           (go_x < 8'd60) ? 4'd5 :
+                           (go_x < 8'd70) ? 4'd6 :
+                           (go_x < 8'd80) ? 4'd7 : 4'd8;
 
   wire [3:0] go_sub_x = (go_char_col == 4'd0) ? go_x[3:0] :
                         (go_char_col == 4'd1) ? go_x[3:0] - 4'd10 :
@@ -504,7 +512,7 @@ module tt_um_AbAdA_2048 (
                         (go_y < 4'd12) ? 3'd3 : 3'd4;
 
   // --------------------------------------------------------------------------
-  // FONT ENGINE GENERATOR
+  // FONT ENGINE & CHARACTER ROM MATRICES
   // --------------------------------------------------------------------------
   wire [6:0] font_x = r_local_x - 7'd28;
   wire [6:0] font_y = r_local_y - 7'd33;
@@ -522,7 +530,6 @@ module tt_um_AbAdA_2048 (
                      (font_y < 7'd18) ? 3'd2 :
                      (font_y < 7'd24) ? 3'd3 : 3'd4;
 
-  // Digit & Alphabet Micro-bitmaps
   localparam [14:0] G_0 = 15'b111_101_101_101_111;
   localparam [14:0] G_1 = 15'b010_110_010_010_111;
   localparam [14:0] G_2 = 15'b111_001_111_100_111;
@@ -545,33 +552,33 @@ module tt_um_AbAdA_2048 (
   reg [14:0] combinational_digit_rom;
   always @(*) begin
     case ({r_tile_val, char_col})
-      {4'd1,  2'd0}: combinational_digit_rom = G_2;
-      {4'd2,  2'd0}: combinational_digit_rom = G_4;
-      {4'd3,  2'd0}: combinational_digit_rom = G_8;
-      {4'd4,  2'd0}: combinational_digit_rom = G_1;
-      {4'd4,  2'd1}: combinational_digit_rom = G_6;
-      {4'd5,  2'd0}: combinational_digit_rom = G_3;
-      {4'd5,  2'd1}: combinational_digit_rom = G_2;
-      {4'd6,  2'd0}: combinational_digit_rom = G_6;
-      {4'd6,  2'd1}: combinational_digit_rom = G_4;
-      {4'd7,  2'd0}: combinational_digit_rom = G_1;
-      {4'd7,  2'd1}: combinational_digit_rom = G_2;
-      {4'd7,  2'd2}: combinational_digit_rom = G_8;
-      {4'd8,  2'd0}: combinational_digit_rom = G_2;
-      {4'd8,  2'd1}: combinational_digit_rom = G_5;
-      {4'd8,  2'd2}: combinational_digit_rom = G_6;
-      {4'd9,  2'd0}: combinational_digit_rom = G_5;
-      {4'd9,  2'd1}: combinational_digit_rom = G_1;
-      {4'd9,  2'd2}: combinational_digit_rom = G_2;
-      {4'd10, 2'd0}: combinational_digit_rom = G_1;
-      {4'd10, 2'd1}: combinational_digit_rom = G_0;
-      {4'd10, 2'd2}: combinational_digit_rom = G_2;
-      {4'd10, 2'd3}: combinational_digit_rom = G_4;
-      {4'd11, 2'd0}: combinational_digit_rom = G_2;
-      {4'd11, 2'd1}: combinational_digit_rom = G_0;
-      {4'd11, 2'd2}: combinational_digit_rom = G_4;
-      {4'd11, 2'd3}: combinational_digit_rom = G_8;
-      default:       combinational_digit_rom = 15'b0;
+      6'b0001_00: combinational_digit_rom = G_2;
+      6'b0010_00: combinational_digit_rom = G_4;
+      6'b0011_00: combinational_digit_rom = G_8;
+      6'b0100_00: combinational_digit_rom = G_1;
+      6'b0100_01: combinational_digit_rom = G_6;
+      6'b0101_00: combinational_digit_rom = G_3;
+      6'b0101_01: combinational_digit_rom = G_2;
+      6'b0110_00: combinational_digit_rom = G_6;
+      6'b0110_01: combinational_digit_rom = G_4;
+      6'b0111_00: combinational_digit_rom = G_1;
+      6'b0111_01: combinational_digit_rom = G_2;
+      6'b0111_10: combinational_digit_rom = G_8;
+      6'b1000_00: combinational_digit_rom = G_2;
+      6'b1000_01: combinational_digit_rom = G_5;
+      6'b1000_10: combinational_digit_rom = G_6;
+      6'b1001_00: combinational_digit_rom = G_5;
+      6'b1001_01: combinational_digit_rom = G_1;
+      6'b1001_10: combinational_digit_rom = G_2;
+      6'b1010_00: combinational_digit_rom = G_1;
+      6'b1010_01: combinational_digit_rom = G_0;
+      6'b1010_10: combinational_digit_rom = G_2;
+      6'b1010_11: combinational_digit_rom = G_4;
+      6'b1011_00: combinational_digit_rom = G_2;
+      6'b1011_01: combinational_digit_rom = G_0;
+      6'b1011_10: combinational_digit_rom = G_4;
+      6'b1011_11: combinational_digit_rom = G_8;
+      default:    combinational_digit_rom = 15'b0;
     endcase
   end
 
@@ -614,7 +621,7 @@ module tt_um_AbAdA_2048 (
   end
 
   // --------------------------------------------------------------------------
-  // VGA PIPELINE ‚Äî Stage 2: Synchronous buffering
+  // VGA PIPELINE — Stage 2: Register & Synchronize Mask Fields
   // --------------------------------------------------------------------------
   reg [14:0] r_digit_rom;
   reg [1:0]  r_bit_x;
@@ -623,13 +630,13 @@ module tt_um_AbAdA_2048 (
   reg        r_is_tile_box, r_is_board_bg, r_border;
   reg [5:0]  r_tile_color, r_num_color;
 
-  // Game Over Pipeline items
   reg        r_stage2_game_over;
   reg        r_in_go_bb;
   reg [14:0] r_go_rom;
   reg [1:0]  r_go_bit_x;
   reg [2:0]  r_go_bit_y;
   reg        r_go_x_valid;
+  reg        r_blink_pulse;
 
   always @(posedge clk) begin
     r_digit_rom        <= combinational_digit_rom;
@@ -647,16 +654,19 @@ module tt_um_AbAdA_2048 (
     r_go_bit_x         <= go_bit_x;
     r_go_bit_y         <= go_bit_y;
     r_go_x_valid       <= (go_sub_x <= 4'd8) && (go_char_col != 4'd4);
+    r_blink_pulse      <= blink_pulse;
   end
 
   wire [3:0] target_bit    = ({1'b0, r_bit_y} * 3'd3) + {2'b0, r_bit_x};
   wire active_num_pixel    = (r_is_tile_box & r_sub_x_valid) ? r_digit_rom[4'd14 - target_bit] : 1'b0;
 
   wire [3:0] target_go_bit = ({1'b0, r_go_bit_y} * 3'd3) + {2'b0, r_go_bit_x};
-  wire active_go_pixel     = (r_stage2_game_over && r_in_go_bb && r_go_x_valid) ? r_go_rom[4'd14 - target_go_bit] : 1'b0;
+  
+  // Use the internal low-frequency blink signal to mask game over text visibility
+  wire active_go_pixel     = (r_stage2_game_over && r_in_go_bb && r_go_x_valid && r_blink_pulse) ? r_go_rom[4'd14 - target_go_bit] : 1'b0;
 
   // --------------------------------------------------------------------------
-  // VGA PIPELINE ‚Äî Stage 3: Final structural layer mapping
+  // VGA PIPELINE — Stage 3: Structural Layer Assignment
   // --------------------------------------------------------------------------
   reg        r_final_num;
   reg        r_final_tile;
@@ -674,13 +684,13 @@ module tt_um_AbAdA_2048 (
     r_final_border     <= r_border;
     r_final_tile_color <= r_tile_color;
     r_final_num_color  <= r_num_color;
-    r_final_game_over  <= r_stage2_game_over;
+    r_final_game_over  <= r_stage2_game_over; // FIXED: Changed self-assignment to track pipeline state
     r_final_go_pixel   <= active_go_pixel;
     r_final_go_box     <= r_in_go_bb;
   end
 
   // --------------------------------------------------------------------------
-  // OUTPUT LAYER MULTIPLEXER
+  // OUTPUT MULTIPLEXER
   // --------------------------------------------------------------------------
   always @(posedge clk) begin
     if (sys_rst) begin
@@ -691,11 +701,10 @@ module tt_um_AbAdA_2048 (
       r_out_vsync <= r_vs3;
 
       if (r_va3) begin
-        // Game-Over text layer overrides background elements
         if (r_final_game_over && r_final_go_pixel) begin
-          {r_out_R, r_out_G, r_out_B} <= BLACK;
+          {r_out_R, r_out_G, r_out_B} <= RED;
         end else if (r_final_game_over && r_final_go_box) begin
-          {r_out_R, r_out_G, r_out_B} <= WHITE; // Text boundary background
+          {r_out_R, r_out_G, r_out_B} <= BLACK; // Dark layout background behind the large blinking text
         end else if (r_final_num) begin
           {r_out_R, r_out_G, r_out_B} <= r_final_num_color;
         end else if (r_final_tile) begin
