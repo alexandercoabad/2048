@@ -4,7 +4,8 @@
 
 Colorful 2048 game!
 
-<img width="378" height="378" alt="Screenshot 2026-06-25 at 8 56 04 PM" src="https://github.com/user-attachments/assets/89d97aef-43b7-4a64-83ef-842db6855e62" />
+<img width="378" height="378" alt="Screenshot 2026-06-25 at 8 56 04 PM" src="https://github.com/user-attachments/assets/cbdfec05-191b-494a-bead-64d44020c139" />
+
 
 
 ## What is Tiny Tapeout?
