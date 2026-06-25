@@ -71,7 +71,7 @@ module tt_um_AbAdA_2048 (
   assign uo_out[3] = r_out_vsync;
   assign uo_out[2] = r_out_B[1];
   assign uo_out[1] = r_out_G[1];
-  assign uo_out = r_out_R[1];
+  assign uo_out[0] = r_out_R[1];
 
   // 4-stage sync delay to match the rendering pipeline depth
   reg r_va0, r_va1, r_va2, r_va3;
